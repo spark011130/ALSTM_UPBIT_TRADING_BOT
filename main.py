@@ -18,7 +18,8 @@ from inputs.data_loader import load_config, get_upbit_keys
 from trading.indicators import calculate_rsi, calculate_macd, \
     calculate_bollinger_bands, calculate_atr, calculate_stochastic_oscillator
 from models.alstm import ALSTM
-from utils.logger import get_logger
+from python_utils.logger import get_logger
+import shutil
 
 # Load config and keys
 CONFIG = load_config()
@@ -48,7 +49,6 @@ CRYPTO_DATA_PATH = f"inputs/{SYMBOL}_prices_{INTERVAL}.csv"
 
 # Check if CUDA is available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}.")
 np.random.seed(0)
 logger.info(f"✅ Computation device set to {device}. Successfully connected to Upbit account.")
 
@@ -115,6 +115,11 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
     model.train()
     losses = []
     progress_bar = tqdm(range(epochs), desc="Training", ncols=100)
+    
+    checkpoint_path = "outputs/checkpoints"
+    if os.path.exists(checkpoint_path):
+        shutil.rmtree(checkpoint_path)
+    os.makedirs(checkpoint_path)
 
     start_epoch = 0
     if resume_from_checkpoint and os.path.exists(resume_from_checkpoint):
@@ -147,7 +152,6 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
         progress_bar.set_postfix(loss=avg_loss)
 
         if torch.isnan(loss) or torch.isinf(loss):
-            print("⚠️ Unstable loss detected.")
             logger.warning("⚠️ Unstable loss detected.")
             continue
 
@@ -156,10 +160,9 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict()
-            }, f"outputs/checkpoint_epoch{epoch+1}.pth")
+            }, f"outputs/checkpoints/checkpoint_epoch{epoch+1}.pth")
 
     torch.save(model.state_dict(), MODEL_PATH)
-    print("✅Model saved.")
     logger.info("✅Model saved.")
     
     # Plot losses
@@ -171,7 +174,6 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
     plt.legend()
     plt.grid(True)
     plt.savefig(LOSS_PLOT_PATH)
-    print(f"📉 Loss curve saved to {LOSS_PLOT_PATH}.")
     logger.info(f"📉 Loss curve saved to {LOSS_PLOT_PATH}.")
     plt.close()
 
@@ -340,9 +342,7 @@ def print_and_save_evaluation_results(results, metrics, filename="outputs/ALSTM_
 
     # Save results to a CSV file
     df.to_csv(filename, index=True)
-    print(f"\n✅ Results saved successfully to '{filename}'.")
     logger.info(f"\n✅ Results saved successfully to '{filename}'.")
-
 
     return df
 
@@ -356,7 +356,6 @@ def main(train_mode):
             df.to_csv(CRYPTO_DATA_PATH, index=False, encoding="utf-8-sig", float_format="%.8f")
         else:
             df = pd.read_csv(CRYPTO_DATA_PATH)
-        print(f"\n✅ Dataframe initiated successfully to '{CRYPTO_DATA_PATH}'.")
         logger.info(f"\n✅ Dataframe initiated successfully to '{CRYPTO_DATA_PATH}'.")
 
         ## TEST THE STRATEGIES
@@ -421,7 +420,6 @@ def main(train_mode):
         N = df_new.shape[0] - 1
         df, scalers = process_data(df)
         if N >= 1:
-            print(f"\n✅ Dataframe updated successfully to '{CRYPTO_DATA_PATH}'.")
             logger.info(f"\n✅ Dataframe updated successfully to '{CRYPTO_DATA_PATH}'.")
         else:
             logger.warning("⚠️ Dataframe has nothing to update.")
@@ -453,22 +451,19 @@ def main(train_mode):
         isOrdered = False
         if crypto_balance:
             crypto_balance = float(crypto_balance[0])
-            print("매수 중인 물량이 있습니다.")
+            logger.info("✅ In-trading.")
             isOrdered = True
-        print(f"예측 가격 (과거): {prediction_past}, 예측 가격 (현재): {prediction}, 종가: {df.iloc[-1, 4]}")
         logger.info(f"Predicted Price (Previous): {prediction_past}, Predicted Price (Current): {prediction}, Closing Price: {df.iloc[-1, 4]}")
         if prediction > prediction_past and (prediction / prediction_past) > (1+THRESHOLD): #  prediction > df.iloc[-1, 4]
             # 매수
             if isOrdered:
                 with open("outputs/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 매수 포지션 유지")
-                print("매수 포지션을 유지합니다.")
                 logger.info("✅ Retaining current buy position.")
             else:
                 with open("outputs/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 시장가 매수")
                 upbit.buy_market_order(TICKER, krw_balance*0.95)
-                print("매수 완료!")
                 logger.info("✅ Buy order executed successfully.")
         else:
             # 매도
@@ -476,42 +471,34 @@ def main(train_mode):
                 with open("outputs/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 시장가 매도")
                 print(upbit.sell_market_order(TICKER, crypto_balance)) # type: ignore
-                print("매도 완료!")
                 logger.info("✅ Sell order executed successfully.")
 
             else:
                 with open("outputs/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 매수 건너뛰기")
-                print("매수하지 않습니다.")
                 logger.info("✅ Buy order not executed.")
 def job():
     now = datetime.now(pytz.timezone('Asia/Seoul'))
     if now.minute == 0:
-        print(f"⏳ Running script at {now.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("⏳ Running trading job.")
         try:
             main(train_mode="invest")
         except Exception as e:
-            print(f"❌ Error: {e}")
             logger.error(f"❌ Error: {e}")
 
 def job2():
     now = datetime.now(pytz.timezone('Asia/Seoul'))
     if now.minute == 30:
-        print(f"⏳ Retraining the model at {now.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("⏳ Retraining the model.")
         try:
             file_path = f"inputs/{SYMBOL}_prices_minute60.csv"
             if os.path.exists(file_path):
                 os.remove(file_path)
-            print("✅ File successfully deleted.")
             logger.info("✅ File successfully deleted.")
             main(train_mode="train")
-            print("✅ Model successfully trained.")
             logger.info("✅ Model successfully trained.")
 
         except Exception as e:
-            print(f"❌ Error: {e}")
             logger.error(f"❌ Error: {e}")
 
 if not BACKTEST:

@@ -1,8 +1,8 @@
 import yaml
 import pyupbit
 
-def load_config(path="config.yaml"):
-    with open(path, "r") as file:
+def load_config(path="inputs/config.yaml"):
+    with open(path, "r", encoding='utf-8') as file:
         return yaml.safe_load(file)
 
 def get_upbit_keys():
