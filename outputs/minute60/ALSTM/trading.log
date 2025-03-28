@@ -1,0 +1,7 @@
+[2025-03-28 15:00:42] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 15:00:42] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_minute60.csv'.
+[2025-03-28 15:15:06] [INFO] ✅Model saved.
+[2025-03-28 15:15:06] [INFO] 📉 Loss curve saved to outputs/minute60/ALSTM/training_loss_curve.png.
+[2025-03-28 15:15:07] [INFO] 
+✅ Results saved successfully to 'outputs/minute60/ALSTM/ALSTM_trading_strategy_evaluation.csv'.

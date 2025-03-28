@@ -1,0 +1,42 @@
+[2025-03-28 18:23:38] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:23:39] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:27:06] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:27:06] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:28:30] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:28:30] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:37:44] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:37:44] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:40:06] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:40:06] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:41:46] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:41:46] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:43:23] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:43:23] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:47:03] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:47:03] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:48:03] [INFO] ✅Model saved.
+[2025-03-28 18:48:04] [INFO] 📉 Loss curve saved to outputs/day/ALSTM/training_loss_curve.png.
+[2025-03-28 18:48:04] [INFO] 
+✅ Results saved successfully to 'outputs/day/ALSTM/ALSTM_trading_strategy_evaluation.csv'.
+[2025-03-28 18:50:01] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:50:01] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:51:01] [INFO] ✅Model saved.
+[2025-03-28 18:51:02] [INFO] 📉 Loss curve saved to outputs/day/ALSTM/training_loss_curve.png.
+[2025-03-28 18:51:02] [INFO] 
+✅ Results saved successfully to 'outputs/day/ALSTM/ALSTM_trading_strategy_evaluation.csv'.
+[2025-03-28 18:52:24] [INFO] ✅ Computation device set to cuda. Successfully connected to Upbit account.
+[2025-03-28 18:52:24] [INFO] 
+✅ Dataframe initiated successfully to 'inputs/bitcoin_prices_day.csv'.
+[2025-03-28 18:53:28] [INFO] ✅Model saved.
+[2025-03-28 18:53:28] [INFO] 📉 Loss curve saved to outputs/day/ALSTM/training_loss_curve.png.
+[2025-03-28 18:53:29] [INFO] 
+✅ Results saved successfully to 'outputs/day/ALSTM/ALSTM_trading_strategy_evaluation.csv'.

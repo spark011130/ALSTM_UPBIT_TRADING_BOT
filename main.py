@@ -17,10 +17,17 @@ from tqdm import tqdm
 from inputs.data_loader import load_config, get_upbit_keys
 from trading.indicators import calculate_rsi, calculate_macd, \
     calculate_bollinger_bands, calculate_atr, calculate_stochastic_oscillator
-# from models.alstm import ALSTM
-from models.model import ALSTMWithFeatureAttention, ALSTM, get_model
+from umap import UMAP
+from sentence_transformers import SentenceTransformer
+from models.model import get_model, get_aggregated_embedding
 from python_utils.logger import get_logger
 import shutil
+
+# UMAP 경고 무시
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
 
 # Load config and keys
 CONFIG = load_config()
@@ -47,6 +54,7 @@ RESULTS_PLOT_PATH = f"outputs/{INTERVAL}/{MODEL_NAME}/"+CONFIG["results_plot_pat
 BACKTEST = CONFIG["backtest"]
 CRYPTO_DATA_PATH = f"inputs/{SYMBOL}_prices_{INTERVAL}.csv"
 START_TIME = CONFIG["start_time"]
+USE_NEWS = CONFIG["use_news"]
 
 logger = get_logger("trading_bot", f"outputs/{INTERVAL}/{MODEL_NAME}/trading.log")
 
@@ -75,17 +83,48 @@ def process_data(df):
     df.dropna(inplace=True)
     return df, scalers
 
-def load_data(df, test_data_num, overlap_gap):
+def load_data(df, use_news, interval, test_data_num, overlap_gap):
     # calculating each of the indicators
     df['RSI'] = calculate_rsi(df)
     df['MACD'], df['Signal'] = calculate_macd(df)
     df['Middle_Band'], df['Upper_Band'], df['Lower_Band'] = calculate_bollinger_bands(df)
     df['ATR'] = calculate_atr(df)
     df['%K'], df['%D'] = calculate_stochastic_oscillator(df)
-    
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+
+    # USE NEWS EMBEDDING
+    if use_news and interval == "day":
+        # LOAD NEWS DATA
+        df_news = pd.read_csv("inputs/bitcoin_news.csv")
+        dates = df_news['date'].drop_duplicates().to_list()
+        parsed_dates = pd.to_datetime(dates)
+
+        # LOAD EMBEDDING MODEL
+        model = SentenceTransformer('paraphrase-MiniLM-L6-v2', device=device)
+
+        # GET AVERAGED EMBEDDING PER DAY
+        embeddings = []
+        for date in tqdm(dates):
+            titles = df_news.loc[df_news['date'] == date, 'title'].to_list()
+            emb = get_aggregated_embedding(model, titles)  # shape: (384,)
+            embeddings.append(emb)
+        
+        embeddings = np.array(embeddings)  # shape: (N_dates, 384)
+
+        # UMAP DIMENSION REDUCTION
+        umap_reducer = UMAP(n_components=10, random_state=42)
+        reduced_embeddings = umap_reducer.fit_transform(embeddings)  # shape: (N_dates, 10)
+        # DATETIME CONVERSION + DATE MAPPING
+        reduced_embedding_dim = reduced_embeddings.shape[1]
+        reduced_embedding_df = pd.DataFrame(reduced_embeddings, columns=[f'emb_{i}' for i in range(reduced_embedding_dim)])
+        reduced_embedding_df['Timestamp'] = parsed_dates + pd.DateOffset(hours=9)
+        # MERGE DF
+        df = df.merge(reduced_embedding_df, on='Timestamp', how='left')
+        df = df[['Timestamp'] + [col for col in df.columns if col != 'Timestamp']]
+
     # regularization (scaler for the indicators, differencing for the stock prices)
     scalers = dict()
-    columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'MACD', 'Signal', 'Middle_Band', 'Upper_Band', 'Lower_Band', 'ATR', '%K', '%D']
+    columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'MACD', 'Signal', 'Middle_Band', 'Upper_Band', 'Lower_Band', 'ATR', '%K', '%D'] + [f'emb_{i}' for i in range(10)]
     train_end_idx = len(df) - test_data_num - overlap_gap
     for col in columns:
         scaler = MinMaxScaler(feature_range=(-1, 1) if col in ['MACD', 'Signal'] else (0, 1))
@@ -100,7 +139,7 @@ def load_data(df, test_data_num, overlap_gap):
         # scaler 저장
         scalers[col] = scaler
     df.dropna(inplace=True)
-
+    print(df.head())
     return df, scalers
 
 class StockDataset(Dataset):
@@ -181,20 +220,12 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
     logger.info(f"📉 Loss curve saved to {LOSS_PLOT_PATH}.")
     plt.close()
 
-
 def evaluate_trading_strategy(y_test, y_pred, interval_in_min, threshold=0.01, risk_free_rate=0.02):
     N = 527040 / interval_in_min
     # Calculate daily returns
 
     returns = np.diff(y_test) / y_test[:-1]  # Actual returns
     pred_returns = np.diff(y_pred) / y_pred[:-1]  # Predicted returns
-
-    df = pd.DataFrame(returns)
-    print("Real Returns Description")
-    print(df.describe())
-    print("Predicted Returns Description")
-    df = pd.DataFrame(pred_returns)
-    print(df.describe())
 
     # Trend-following strategy: If y_pred > y_pred, go long (buy)
     trend_strategy = np.where(pred_returns > 0, 1, 0)  # Buy (1), no Short.
@@ -285,10 +316,7 @@ def evaluate_model(model, test_loader, scalers):
 
     y_test = actuals_original.flatten()
     y_pred = predictions_original.flatten()
-    df = pd.DataFrame(y_test)
-    print(df.describe())
-    df = pd.DataFrame(y_pred)
-    print(df.describe())
+
     # Calculate returns for IC
     returns_actual = np.diff(y_test) / y_test[:-1]
     returns_pred = np.diff(y_pred) / y_pred[:-1]
@@ -297,8 +325,6 @@ def evaluate_model(model, test_loader, scalers):
     mse = np.mean((y_test - y_pred)**2)
     mae = np.mean(np.abs(y_test - y_pred))
     ic, _ = spearmanr(returns_pred, returns_actual)
-    print(returns_pred[:-20])
-    print(returns_actual[:-20])
     # ICIR (Information Coefficient Information Ratio)
     ic_series = pd.Series(returns_actual).rolling(window=10).apply(
         lambda x: spearmanr(x, pd.Series(returns_pred).iloc[x.index])[0], raw=False
@@ -382,7 +408,7 @@ def main(train_mode):
         logger.info(f"\n✅ Dataframe initiated successfully to '{CRYPTO_DATA_PATH}'.")
 
         ## TEST THE STRATEGIES
-        df, scalers = load_data(df, TEST_DATA_NUM, OVERLAP_GAP)
+        df, scalers = load_data(df, USE_NEWS, INTERVAL, TEST_DATA_NUM, OVERLAP_GAP)
         data_np = df.iloc[:, 1:].values
 
         train_end_idx = len(data_np) - TEST_DATA_NUM - OVERLAP_GAP
@@ -391,7 +417,7 @@ def main(train_mode):
 
         train_dataset = StockDataset(train_data, SEQ_LENGTH)
         test_dataset = StockDataset(test_data, SEQ_LENGTH)
-        
+
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
         test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
         

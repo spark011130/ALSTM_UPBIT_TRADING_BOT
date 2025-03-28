@@ -5,14 +5,15 @@ symbol: bitcoin            # 종목 이름 (파일 저장 등 내부용)
 ticker: KRW-BTC            # 업비트 기준 티커 (KRW로 거래되는 코인만 가능)
 
 # ⏱️ 시간 단위 설정
-interval: minute60        # 데이터 간격 (minute15, minute60, minute240 등 업비트 기준)
-interval_in_min: 60       # 위 interval을 분 단위로 환산한 값 (예: minute60 -> 60)
+interval: day        # 데이터 간격 (minute15, minute60, minute240 등 업비트 기준)
+interval_in_min: 1440       # 위 interval을 분 단위로 환산한 값 (예: minute60 -> 60)
 
 # 📐 모델 입력 설정
-model_name: ALSTM_FEATURE_ATTENTION #ALSTM, ALSTM_FEATURE_ATTENTION
+model_name: ALSTM          #ALSTM, ALSTM_FEATURE_ATTENTION
+use_news: True             # day기준일 경우 뉴스를 사용하기
 seq_length: 20             # LSTM에 들어갈 과거 시계열 길이 (윈도우 사이즈)
 batch_size: 32             # 학습 배치 크기
-start_time: "2019-01-01"   # 비트코인 주가 스크래핑 시작
+start_time: "2021-01-01"   # 비트코인 주가 스크래핑 시작
 
 # 🧠 학습 설정
 lr: 0.001                  # 학습률 (Learning Rate)

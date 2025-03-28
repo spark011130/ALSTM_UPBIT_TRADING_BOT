@@ -1,11 +1,23 @@
 import torch
 import torch.nn as nn
+import numpy as np
+import random
 
 def get_model(model_name, input_dim, device):
     if model_name == "ALSTM":
         return ALSTM(input_dim=input_dim).to(device)
     elif model_name == "ALSTM_FEATURE_ATTENTION":
         return ALSTMWithFeatureAttention(input_dim=input_dim).to(device)
+
+### NEWS EMBEDDING
+def get_aggregated_embedding(model, headlines, batch_size=16, max_headlines=100):
+    if len(headlines) > max_headlines:
+        headlines = random.sample(headlines, max_headlines)
+        
+    embeddings = model.encode(headlines, batch_size=batch_size, convert_to_numpy=True)
+    aggregated_embedding = np.mean(embeddings, axis=0)
+
+    return aggregated_embedding
 
 ### ALSTM
 class Attention(nn.Module):
