@@ -5,18 +5,19 @@ symbol: bitcoin            # 종목 이름 (파일 저장 등 내부용)
 ticker: KRW-BTC            # 업비트 기준 티커 (KRW로 거래되는 코인만 가능)
 
 # ⏱️ 시간 단위 설정
-interval: minute240        # 데이터 간격 (minute15, minute60, minute240 등 업비트 기준)
-interval_in_min: 240       # 위 interval을 분 단위로 환산한 값 (예: minute60 -> 60)
+interval: minute60        # 데이터 간격 (minute15, minute60, minute240 등 업비트 기준)
+interval_in_min: 60       # 위 interval을 분 단위로 환산한 값 (예: minute60 -> 60)
 
 # 📐 모델 입력 설정
-seq_length: 10             # LSTM에 들어갈 과거 시계열 길이 (윈도우 사이즈)
+seq_length: 20             # LSTM에 들어갈 과거 시계열 길이 (윈도우 사이즈)
 batch_size: 32             # 학습 배치 크기
+start_time: "2019-01-01"   # 비트코인 주가 스크래핑 시작
 
 # 🧠 학습 설정
 lr: 0.001                  # 학습률 (Learning Rate)
 epochs: 100                # 학습 epoch 수
-split_ratio: 0.95          # 학습 데이터 비율 (0.95 = 95% 학습, 5% 테스트)
-overlap_gap: 90
+test_data_num: 400         # 테스트 데이터의 수
+overlap_gap: 20
 
 # 💡 전략 설정
 threshold: 0.001           # 이벤트 드리븐 전략에서 매수 기준이 되는 상승폭
@@ -24,9 +25,9 @@ risk_free_rate: 0.02       # 무위험 수익률 (샤프 비율 계산에 사용
 transaction_fee: 0.0005
 
 # 📁 저장 경로 설정
-model_path: outputs/alstm_model.pth               # 학습된 모델 저장 경로
-loss_plot_path: outputs/training_loss_curve.png   # 학습 과정에서 loss 곡선 이미지 저장 경로
-results_plot_path: outputs/LSTM_prediction.png    # 테스트 결과 (예측 vs 실제) 그래프 저장 경로
+model_path: alstm_model.pth               # 학습된 모델 저장 경로
+loss_plot_path: training_loss_curve.png   # 학습 과정에서 loss 곡선 이미지 저장 경로
+results_plot_path: ALSTM_prediction.png    # 테스트 결과 (예측 vs 실제) 그래프 저장 경로
 
 # 🧪 모드 설정
 backtest: true              # true이면 백테스트만 수행, false이면 실시간 매매 실행

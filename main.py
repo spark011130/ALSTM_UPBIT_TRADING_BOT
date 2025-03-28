@@ -24,7 +24,7 @@ import shutil
 # Load config and keys
 CONFIG = load_config()
 upbit = get_upbit_keys()
-logger = get_logger("trading_bot", "outputs/trading.log")
+
 
 # Global configs
 SYMBOL = CONFIG["symbol"]
@@ -35,17 +35,19 @@ SEQ_LENGTH = CONFIG["seq_length"]
 BATCH_SIZE = CONFIG["batch_size"]
 LR = CONFIG["lr"]
 EPOCHS = CONFIG["epochs"]
-SPLIT_RATIO = CONFIG["split_ratio"]
+TEST_DATA_NUM = CONFIG["test_data_num"]
 OVERLAP_GAP = CONFIG["overlap_gap"]
 THRESHOLD = CONFIG["threshold"]
 RISK_FREE_RATE = CONFIG["risk_free_rate"]
 TRANSACTION_FEE = CONFIG["transaction_fee"]
-MODEL_PATH = CONFIG["model_path"]
-LOSS_PLOT_PATH = CONFIG["loss_plot_path"]
-RESULTS_PLOT_PATH = CONFIG["results_plot_path"]
+MODEL_PATH = f"outputs/{INTERVAL}/"+CONFIG["model_path"]
+LOSS_PLOT_PATH = f"outputs/{INTERVAL}/"+CONFIG["loss_plot_path"]
+RESULTS_PLOT_PATH = f"outputs/{INTERVAL}/"+CONFIG["results_plot_path"]
 BACKTEST = CONFIG["backtest"]
 CRYPTO_DATA_PATH = f"inputs/{SYMBOL}_prices_{INTERVAL}.csv"
+START_TIME = CONFIG["start_time"]
 
+logger = get_logger("trading_bot", f"outputs/{INTERVAL}/trading.log")
 
 # Check if CUDA is available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,7 +74,7 @@ def process_data(df):
     df.dropna(inplace=True)
     return df, scalers
 
-def load_data(df, split_ratio):
+def load_data(df, test_data_num, overlap_gap):
     # calculating each of the indicators
     df['RSI'] = calculate_rsi(df)
     df['MACD'], df['Signal'] = calculate_macd(df)
@@ -81,15 +83,21 @@ def load_data(df, split_ratio):
     df['%K'], df['%D'] = calculate_stochastic_oscillator(df)
     
     # regularization (scaler for the indicators, differencing for the stock prices)
-    train_size = int(len(df) * split_ratio)
-
     scalers = dict()
     columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'MACD', 'Signal', 'Middle_Band', 'Upper_Band', 'Lower_Band', 'ATR', '%K', '%D']
+    train_end_idx = len(df) - test_data_num - overlap_gap
     for col in columns:
         scaler = MinMaxScaler(feature_range=(-1, 1) if col in ['MACD', 'Signal'] else (0, 1))
-        df.loc[:train_size, col] = scaler.fit_transform(df.loc[:train_size, [col]])
-        scalers[f'{col}'] = scaler
-        df.loc[train_size+1:, col] = scaler.transform(df.loc[train_size+1:, [col]])
+        # 학습 데이터에 대해 fit + transform
+        df.iloc[:train_end_idx, df.columns.get_loc(col)] = scaler.fit_transform(
+            df.iloc[:train_end_idx, [df.columns.get_loc(col)]]
+        )
+        # 테스트 데이터에 대해 transform만
+        df.iloc[-test_data_num:, df.columns.get_loc(col)] = scaler.transform(
+            df.iloc[-test_data_num:, [df.columns.get_loc(col)]]
+        )
+        # scaler 저장
+        scalers[col] = scaler
     df.dropna(inplace=True)
 
     return df, scalers
@@ -110,16 +118,11 @@ class StockDataset(Dataset):
 # Train the model
 def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoint=None):
     model.to(device)
-    criterion = nn.SmoothL1Loss()
+    criterion = nn.HuberLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     model.train()
     losses = []
     progress_bar = tqdm(range(epochs), desc="Training", ncols=100)
-    
-    checkpoint_path = "outputs/checkpoints"
-    if os.path.exists(checkpoint_path):
-        shutil.rmtree(checkpoint_path)
-    os.makedirs(checkpoint_path)
 
     start_epoch = 0
     if resume_from_checkpoint and os.path.exists(resume_from_checkpoint):
@@ -129,23 +132,23 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         logger.info(f"✅ Resuming training from checkpoint at epoch {start_epoch}")
-        
     else:
         optimizer = optim.Adam(model.parameters(), lr=lr)
+        checkpoint_path = f"outputs/{INTERVAL}/checkpoints"
+        if os.path.exists(checkpoint_path):
+            shutil.rmtree(checkpoint_path)
+        os.makedirs(checkpoint_path)
 
     for epoch in progress_bar:        
         total_loss=0.0
         for X_batch, y_batch in train_loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             optimizer.zero_grad()
-
             y_pred, _ = model(X_batch)
             y_pred = y_pred.squeeze()
-
             loss = criterion(y_pred, y_batch)
             loss.backward()
             optimizer.step()
-
             total_loss += loss.item()
         avg_loss = total_loss / len(train_loader)
         losses.append(avg_loss)
@@ -160,7 +163,7 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict()
-            }, f"outputs/checkpoints/checkpoint_epoch{epoch+1}.pth")
+            }, f"outputs/{INTERVAL}/checkpoints/checkpoint_epoch{epoch+1}.pth")
 
     torch.save(model.state_dict(), MODEL_PATH)
     logger.info("✅Model saved.")
@@ -181,6 +184,7 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
 def evaluate_trading_strategy(y_test, y_pred, interval_in_min, threshold=0.01, risk_free_rate=0.02):
     N = 527040 / interval_in_min
     # Calculate daily returns
+
     returns = np.diff(y_test) / y_test[:-1]  # Actual returns
     pred_returns = np.diff(y_pred) / y_pred[:-1]  # Predicted returns
 
@@ -280,7 +284,10 @@ def evaluate_model(model, test_loader, scalers):
 
     y_test = actuals_original.flatten()
     y_pred = predictions_original.flatten()
-
+    df = pd.DataFrame(y_test)
+    print(df.describe())
+    df = pd.DataFrame(y_pred)
+    print(df.describe())
     # Calculate returns for IC
     returns_actual = np.diff(y_test) / y_test[:-1]
     returns_pred = np.diff(y_pred) / y_pred[:-1]
@@ -289,26 +296,34 @@ def evaluate_model(model, test_loader, scalers):
     mse = np.mean((y_test - y_pred)**2)
     mae = np.mean(np.abs(y_test - y_pred))
     ic, _ = spearmanr(returns_pred, returns_actual)
-
+    print(returns_pred[:-20])
+    print(returns_actual[:-20])
     # ICIR (Information Coefficient Information Ratio)
     ic_series = pd.Series(returns_actual).rolling(window=10).apply(
         lambda x: spearmanr(x, pd.Series(returns_pred).iloc[x.index])[0], raw=False
     )
     icir = ic_series.mean() / ic_series.std() if ic_series.std() != 0 else np.nan
 
+    direction_accuracy = np.mean(np.sign(returns_actual) == np.sign(returns_pred))
+    up_market = returns_actual > 0
+    hit_up = np.mean((returns_pred > 0)[up_market])
+
+    down_market = returns_actual < 0
+    hit_down = np.mean((returns_pred < 0)[down_market])
+
     # Plot results
     plt.figure(figsize=(12, 6))
     plt.plot(y_test, label='Actual (Original Scale)')
     plt.plot(y_pred, label='Predicted (Original Scale)')
     plt.legend()
-    plt.title('LSTM Stock Prediction')
+    plt.title('ALSTM Stock Prediction')
     plt.savefig(RESULTS_PLOT_PATH, dpi=300)
     plt.close()
 
-    metrices = [mse, mae, ic, icir]
+    metrices = [mse, mae, ic, icir, direction_accuracy, hit_up, hit_down]
     return y_pred, y_test, metrices
 
-def print_and_save_evaluation_results(results, metrics, filename="outputs/ALSTM_trading_strategy_evaluation.csv"):
+def print_and_save_evaluation_results(results, metrics, filename=f"outputs/{INTERVAL}/ALSTM_trading_strategy_evaluation.csv"):
     # Convert results dictionary to DataFrame
     df = pd.DataFrame(results).T  # Transpose for a structured tabular format
 
@@ -320,7 +335,11 @@ def print_and_save_evaluation_results(results, metrics, filename="outputs/ALSTM_
         "MSE": [metrics[0]],
         "MAE": [metrics[1]],
         "IC": [metrics[2]],
-        "ICIR": [metrics[3]]
+        "ICIR": [metrics[3]],
+        "DIRECTION ACCURACY": [metrics[4]],
+        "HIT-UP": [metrics[5]],
+        "HIT-DOWN": [metrics[6]]
+
     }, index=["Evaluation Metrics"])
 
     # Concatenate strategy results and evaluation metrics
@@ -339,6 +358,9 @@ def print_and_save_evaluation_results(results, metrics, filename="outputs/ALSTM_
     print("🔹 MAE (Mean Absolute Error): Measures average absolute error (Lower is better)")
     print("🔹 IC (Information Coefficient): Measures predictive power (Higher is better)")
     print("🔹 ICIR (Information Coefficient Information Ratio): Measures consistency of IC")
+    print("🔹 Direction Accuracy: Measures how often the model gets the direction (up/down) right")
+    print("🔹 Hit Rate (Up Market): Accuracy when the actual return is positive")
+    print("🔹 Hit Rate (Down Market): Accuracy when the actual return is negative")
 
     # Save results to a CSV file
     df.to_csv(filename, index=True)
@@ -349,7 +371,7 @@ def print_and_save_evaluation_results(results, metrics, filename="outputs/ALSTM_
 def main(train_mode):
     if train_mode == "backtest":
         if not os.path.exists(CRYPTO_DATA_PATH):
-            df = pyupbit.get_ohlcv_from(ticker=TICKER, interval=INTERVAL, fromDatetime="2020-01-01")
+            df = pyupbit.get_ohlcv_from(ticker=TICKER, interval=INTERVAL, fromDatetime=START_TIME)
             df.reset_index(inplace=True)
             df.columns = ["Timestamp", "Open", "High", "Low", "Close", "Volume", "Value"] 
             df = df.drop(columns=["Value"])
@@ -359,12 +381,12 @@ def main(train_mode):
         logger.info(f"\n✅ Dataframe initiated successfully to '{CRYPTO_DATA_PATH}'.")
 
         ## TEST THE STRATEGIES
-        df, scalers = load_data(df, SPLIT_RATIO)
+        df, scalers = load_data(df, TEST_DATA_NUM, OVERLAP_GAP)
         data_np = df.iloc[:, 1:].values
-        split = int(len(data_np) * SPLIT_RATIO)
-        # Adding 90, to prevent overlapping
-        train_data, test_data = data_np[:split], data_np[split+90:]
 
+        train_end_idx = len(data_np) - TEST_DATA_NUM - OVERLAP_GAP
+        train_data = data_np[:train_end_idx]
+        test_data = data_np[-TEST_DATA_NUM:]
 
         train_dataset = StockDataset(train_data, SEQ_LENGTH)
         test_dataset = StockDataset(test_data, SEQ_LENGTH)
@@ -395,7 +417,7 @@ def main(train_mode):
         df.to_csv(CRYPTO_DATA_PATH, index=False, encoding="utf-8-sig", float_format="%.8f")
         N = df_new.shape[0] - 1
         data_np = df.iloc[:, 1:].values
-        train_data = data_np[:-11]
+        train_data = data_np[:-(SEQ_LENGTH+1)]
         train_dataset = StockDataset(train_data, SEQ_LENGTH)
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -425,14 +447,14 @@ def main(train_mode):
             logger.warning("⚠️ Dataframe has nothing to update.")
 
         data_np = df.iloc[:, 1:].values
-        test_data = data_np[-11:]
+        test_data = data_np[-(SEQ_LENGTH+1):]
 
         input_dim = data_np.shape[1]
         model = ALSTM(input_dim=input_dim).to(device)
         model.load_state_dict(torch.load(MODEL_PATH))
         
-        X_input_past = torch.tensor(test_data[-11:-1], dtype=torch.float32).unsqueeze(0).to(device)
-        X_input = torch.tensor(test_data[-10:], dtype=torch.float32).unsqueeze(0).to(device)
+        X_input_past = torch.tensor(test_data[-(SEQ_LENGTH+1):-1], dtype=torch.float32).unsqueeze(0).to(device)
+        X_input = torch.tensor(test_data[-(SEQ_LENGTH):], dtype=torch.float32).unsqueeze(0).to(device)
 
         ## PREDiCTION PHASE
         model.eval()
@@ -457,24 +479,24 @@ def main(train_mode):
         if prediction > prediction_past and (prediction / prediction_past) > (1+THRESHOLD): #  prediction > df.iloc[-1, 4]
             # 매수
             if isOrdered:
-                with open("outputs/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 매수 포지션 유지")
                 logger.info("✅ Retaining current buy position.")
             else:
-                with open("outputs/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 시장가 매수")
                 upbit.buy_market_order(TICKER, krw_balance*0.95)
                 logger.info("✅ Buy order executed successfully.")
         else:
             # 매도
             if isOrdered:
-                with open("outputs/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 시장가 매도")
                 print(upbit.sell_market_order(TICKER, crypto_balance)) # type: ignore
                 logger.info("✅ Sell order executed successfully.")
 
             else:
-                with open("outputs/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 매수 건너뛰기")
                 logger.info("✅ Buy order not executed.")
 def job():
@@ -491,7 +513,7 @@ def job2():
     if now.minute == 30:
         logger.info("⏳ Retraining the model.")
         try:
-            file_path = f"inputs/{SYMBOL}_prices_minute60.csv"
+            file_path = f"inputs/{SYMBOL}_prices_{INTERVAL}.csv"
             if os.path.exists(file_path):
                 os.remove(file_path)
             logger.info("✅ File successfully deleted.")
