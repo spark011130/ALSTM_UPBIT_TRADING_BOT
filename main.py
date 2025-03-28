@@ -17,7 +17,8 @@ from tqdm import tqdm
 from inputs.data_loader import load_config, get_upbit_keys
 from trading.indicators import calculate_rsi, calculate_macd, \
     calculate_bollinger_bands, calculate_atr, calculate_stochastic_oscillator
-from models.alstm import ALSTM
+# from models.alstm import ALSTM
+from models.model import ALSTMWithFeatureAttention, ALSTM, get_model
 from python_utils.logger import get_logger
 import shutil
 
@@ -25,12 +26,12 @@ import shutil
 CONFIG = load_config()
 upbit = get_upbit_keys()
 
-
 # Global configs
 SYMBOL = CONFIG["symbol"]
 TICKER = CONFIG["ticker"]
 INTERVAL = CONFIG["interval"]
 INTERVAL_IN_MIN = CONFIG["interval_in_min"]
+MODEL_NAME = CONFIG["model_name"]
 SEQ_LENGTH = CONFIG["seq_length"]
 BATCH_SIZE = CONFIG["batch_size"]
 LR = CONFIG["lr"]
@@ -40,14 +41,14 @@ OVERLAP_GAP = CONFIG["overlap_gap"]
 THRESHOLD = CONFIG["threshold"]
 RISK_FREE_RATE = CONFIG["risk_free_rate"]
 TRANSACTION_FEE = CONFIG["transaction_fee"]
-MODEL_PATH = f"outputs/{INTERVAL}/"+CONFIG["model_path"]
-LOSS_PLOT_PATH = f"outputs/{INTERVAL}/"+CONFIG["loss_plot_path"]
-RESULTS_PLOT_PATH = f"outputs/{INTERVAL}/"+CONFIG["results_plot_path"]
+MODEL_PATH = f"outputs/{INTERVAL}/{MODEL_NAME}/"+CONFIG["model_path"]
+LOSS_PLOT_PATH = f"outputs/{INTERVAL}/{MODEL_NAME}/"+CONFIG["loss_plot_path"]
+RESULTS_PLOT_PATH = f"outputs/{INTERVAL}/{MODEL_NAME}/"+CONFIG["results_plot_path"]
 BACKTEST = CONFIG["backtest"]
 CRYPTO_DATA_PATH = f"inputs/{SYMBOL}_prices_{INTERVAL}.csv"
 START_TIME = CONFIG["start_time"]
 
-logger = get_logger("trading_bot", f"outputs/{INTERVAL}/trading.log")
+logger = get_logger("trading_bot", f"outputs/{INTERVAL}/{MODEL_NAME}/trading.log")
 
 # Check if CUDA is available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -134,7 +135,7 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
         logger.info(f"✅ Resuming training from checkpoint at epoch {start_epoch}")
     else:
         optimizer = optim.Adam(model.parameters(), lr=lr)
-        checkpoint_path = f"outputs/{INTERVAL}/checkpoints"
+        checkpoint_path = f"outputs/{INTERVAL}/{MODEL_NAME}/checkpoints"
         if os.path.exists(checkpoint_path):
             shutil.rmtree(checkpoint_path)
         os.makedirs(checkpoint_path)
@@ -144,7 +145,7 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
         for X_batch, y_batch in train_loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             optimizer.zero_grad()
-            y_pred, _ = model(X_batch)
+            y_pred, *_ = model(X_batch)
             y_pred = y_pred.squeeze()
             loss = criterion(y_pred, y_batch)
             loss.backward()
@@ -163,7 +164,7 @@ def train_model(model, train_loader, epochs=100, lr=0.001, resume_from_checkpoin
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict()
-            }, f"outputs/{INTERVAL}/checkpoints/checkpoint_epoch{epoch+1}.pth")
+            }, f"outputs/{INTERVAL}/{MODEL_NAME}/checkpoints/checkpoint_epoch{epoch+1}.pth")
 
     torch.save(model.state_dict(), MODEL_PATH)
     logger.info("✅Model saved.")
@@ -261,7 +262,7 @@ def evaluate_model(model, test_loader, scalers):
     with torch.no_grad():
         for X_batch, y_batch in test_loader:
             X_batch = X_batch.to(device)
-            y_pred, _ = model(X_batch)
+            y_pred, *_ = model(X_batch)
             y_pred = y_pred.squeeze().cpu().numpy()
 
             # 🛠 Fix for scalar output
@@ -316,14 +317,14 @@ def evaluate_model(model, test_loader, scalers):
     plt.plot(y_test, label='Actual (Original Scale)')
     plt.plot(y_pred, label='Predicted (Original Scale)')
     plt.legend()
-    plt.title('ALSTM Stock Prediction')
+    plt.title(f'{MODEL_NAME} Stock Prediction')
     plt.savefig(RESULTS_PLOT_PATH, dpi=300)
     plt.close()
 
     metrices = [mse, mae, ic, icir, direction_accuracy, hit_up, hit_down]
     return y_pred, y_test, metrices
 
-def print_and_save_evaluation_results(results, metrics, filename=f"outputs/{INTERVAL}/ALSTM_trading_strategy_evaluation.csv"):
+def print_and_save_evaluation_results(results, metrics, filename=f"outputs/{INTERVAL}/{MODEL_NAME}/{MODEL_NAME}_trading_strategy_evaluation.csv"):
     # Convert results dictionary to DataFrame
     df = pd.DataFrame(results).T  # Transpose for a structured tabular format
 
@@ -395,7 +396,7 @@ def main(train_mode):
         test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
         
         input_dim = data_np.shape[1]
-        model = ALSTM(input_dim=input_dim).to(device)
+        model = get_model(MODEL_NAME, input_dim, device)
         
         train_model(model=model, train_loader=train_loader, epochs=EPOCHS, lr=LR)
         
@@ -422,7 +423,7 @@ def main(train_mode):
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
         input_dim = data_np.shape[1]
-        model = ALSTM(input_dim=input_dim).to(device)
+        model = get_model(MODEL_NAME, input_dim, device)
 
         train_model(model=model, train_loader=train_loader, epochs=EPOCHS, lr=LR)
 
@@ -450,7 +451,7 @@ def main(train_mode):
         test_data = data_np[-(SEQ_LENGTH+1):]
 
         input_dim = data_np.shape[1]
-        model = ALSTM(input_dim=input_dim).to(device)
+        model = get_model(MODEL_NAME, input_dim, device)
         model.load_state_dict(torch.load(MODEL_PATH))
         
         X_input_past = torch.tensor(test_data[-(SEQ_LENGTH+1):-1], dtype=torch.float32).unsqueeze(0).to(device)
@@ -459,9 +460,9 @@ def main(train_mode):
         ## PREDiCTION PHASE
         model.eval()
         with torch.no_grad():
-            output, _ = model(X_input)
+            output, *_ = model(X_input)
             prediction = output.squeeze().cpu().numpy()
-            output_past, _ = model(X_input_past)
+            output_past, *_ = model(X_input_past)
             prediction_past = output_past.squeeze().cpu().numpy()    
 
         ## UPBIT 매수 매도
@@ -479,24 +480,24 @@ def main(train_mode):
         if prediction > prediction_past and (prediction / prediction_past) > (1+THRESHOLD): #  prediction > df.iloc[-1, 4]
             # 매수
             if isOrdered:
-                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/{MODEL_NAME}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 매수 포지션 유지")
                 logger.info("✅ Retaining current buy position.")
             else:
-                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/{MODEL_NAME}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 시장가 매수")
                 upbit.buy_market_order(TICKER, krw_balance*0.95)
                 logger.info("✅ Buy order executed successfully.")
         else:
             # 매도
             if isOrdered:
-                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/{MODEL_NAME}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 시장가 매도")
                 print(upbit.sell_market_order(TICKER, crypto_balance)) # type: ignore
                 logger.info("✅ Sell order executed successfully.")
 
             else:
-                with open(f"outputs/{INTERVAL}/trade_log.txt", "a") as f:
+                with open(f"outputs/{INTERVAL}/{MODEL_NAME}/trade_log.txt", "a") as f:
                     f.write(f"{datetime.now()} - 매수 건너뛰기")
                 logger.info("✅ Buy order not executed.")
 def job():
